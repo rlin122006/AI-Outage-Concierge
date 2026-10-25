@@ -8,12 +8,16 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
     <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Mapsui.Wpf" Version="5.1.0" />
     <ApplicationDefinition Include="src\App.xaml" />
+    <Resource Include="src\Assets\larp.svg" />
+    <Resource Include="src\Assets\larp.png" />
+    <Resource Include="src\Assets\larp.ico" />
     <None Update=".env.example" CopyToOutputDirectory="Never" />
     <None Update="src\Prediction\network_heatmap.csv" CopyToOutputDirectory="PreserveNewest" Link="Prediction\network_heatmap.csv" />
   </ItemGroup>

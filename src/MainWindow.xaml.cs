@@ -1,10 +1,16 @@
 using System.Globalization;
+using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using FormsContextMenuStrip = System.Windows.Forms.ContextMenuStrip;
+using FormsNotifyIcon = System.Windows.Forms.NotifyIcon;
+using FormsToolStripMenuItem = System.Windows.Forms.ToolStripMenuItem;
+using DrawingIcon = System.Drawing.Icon;
 using larp.Assistant;
+using larp.Configuration;
 using larp.Prediction;
 using Mapsui;
 using Mapsui.Layers;
@@ -19,10 +25,24 @@ namespace larp;
 
 public partial class MainWindow : Window
 {
+    private sealed class TrayMenuRenderer : System.Windows.Forms.ToolStripProfessionalRenderer
+    {
+        protected override void OnRenderMenuItemBackground(System.Windows.Forms.ToolStripItemRenderEventArgs e)
+        {
+            if (!e.Item.Selected && !e.Item.Pressed) return;
+
+            var bounds = new System.Drawing.Rectangle(4, 1, e.Item.Width - 8, e.Item.Height - 2);
+            using var brush = new System.Drawing.SolidBrush(e.Item.Pressed
+                ? System.Drawing.Color.FromArgb(197, 220, 255)
+                : System.Drawing.Color.FromArgb(220, 235, 255));
+            e.Graphics.FillRectangle(brush, bounds);
+        }
+    }
+
     private const double GridCellHalfSize = 0.005;
     private const double WebMercatorRadius = 6378137;
     private readonly HistoricalDamagePredictionService _predictionService = new();
-    private readonly IConciergeChatService _chatService = new StubConciergeChatService();
+    private IConciergeChatService? _chatService;
     private MapCoordinate? _selectedCoordinate;
     private OutagePrediction? _currentPrediction;
     private Mapsui.Map? _map;
@@ -36,6 +56,8 @@ public partial class MainWindow : Window
     private MemoryLayer? _selectionLayer;
     private double _fitResolution;
     private bool _mapReady;
+    private FormsNotifyIcon? _trayIcon;
+    private string? _chatModel;
 
     public MainWindow()
     {
@@ -44,8 +66,89 @@ public partial class MainWindow : Window
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
     {
+        InitializeTrayIcon();
+        InitializeChatService();
         InitializeAreaMap();
         RefreshPreparationAndAlerts();
+    }
+
+    private void InitializeChatService()
+    {
+        var options = OpenAiCompatibleApiOptions.FromEnvironment();
+        if (options is null)
+        {
+            ChatStatusText.Text = "API key needed";
+            ChatResponse.Text = "Copy .env.example to .env beside larp.slnx. For OpenAI, add your key to OUTAGE_AI_API_KEY. For a local server, set OUTAGE_AI_BASE_URL=localhost:PORT/v1 and its model name; local servers may omit the key. Restart L.A.R.P. after editing .env.";
+            SendButton.IsEnabled = false;
+            return;
+        }
+
+        _chatService = new OpenAiCompatibleConciergeChatService(options);
+        _chatModel = options.Model;
+        ChatStatusText.Text = $"Ready · {options.Model}";
+        ChatResponse.Text = "Ask about your estimate, outage preparation, or the limits of the historical data.";
+    }
+
+    private void InitializeTrayIcon()
+    {
+        if (_trayIcon is not null) return;
+
+        var iconResource = System.Windows.Application.GetResourceStream(new Uri("pack://application:,,,/src/Assets/larp.ico", UriKind.Absolute));
+        if (iconResource is null) return;
+
+        using (iconResource.Stream)
+        using (var sourceIcon = new DrawingIcon(iconResource.Stream))
+        {
+            var menu = new FormsContextMenuStrip
+            {
+                BackColor = System.Drawing.Color.White,
+                Font = System.Drawing.SystemFonts.MenuFont,
+                Padding = new System.Windows.Forms.Padding(4),
+                Renderer = new TrayMenuRenderer(),
+                ShowCheckMargin = false,
+                ShowImageMargin = false
+            };
+            menu.Items.Add(CreateTrayMenuItem("Open L.A.R.P.", (_, _) => Dispatcher.BeginInvoke(new Action(RestoreFromTray))));
+            menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+            menu.Items.Add(CreateTrayMenuItem("Exit", (_, _) => Dispatcher.BeginInvoke(new Action(Close))));
+
+            _trayIcon = new FormsNotifyIcon
+            {
+                Icon = (DrawingIcon)sourceIcon.Clone(),
+                Text = "L.A.R.P.",
+                ContextMenuStrip = menu,
+                Visible = true
+            };
+            _trayIcon.DoubleClick += (_, _) => Dispatcher.BeginInvoke(new Action(RestoreFromTray));
+        }
+    }
+
+    private static FormsToolStripMenuItem CreateTrayMenuItem(string text, EventHandler onClick) => new(text, null, onClick)
+    {
+        BackColor = System.Drawing.Color.White,
+        ForeColor = System.Drawing.Color.FromArgb(23, 25, 28),
+        Margin = new System.Windows.Forms.Padding(2, 1, 2, 1),
+        Padding = new System.Windows.Forms.Padding(10, 6, 10, 6)
+    };
+
+    private void RestoreFromTray()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(RestoreFromTray));
+            return;
+        }
+
+        Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _trayIcon?.Dispose();
+        _trayIcon = null;
+        base.OnClosed(e);
     }
 
     private void WindowChrome_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -64,7 +167,7 @@ public partial class MainWindow : Window
     {
         while (element is not null)
         {
-            if (element is Button) return true;
+            if (element is System.Windows.Controls.Button) return true;
             element = VisualTreeHelper.GetParent(element);
         }
         return false;
@@ -493,12 +596,54 @@ public partial class MainWindow : Window
         return new RepairAccessCondition(label, extraHours);
     }
 
-    private void SendButton_Click(object sender, RoutedEventArgs e)
+    private async void SendButton_Click(object sender, RoutedEventArgs e)
     {
         var question = ChatInput.Text.Trim();
         if (question.Length == 0) return;
-        ChatResponse.Text = _chatService.GetResponse(question, _currentPrediction);
-        ChatInput.Clear();
+        if (_chatService is null)
+        {
+            ChatStatusText.Text = "API key needed";
+            return;
+        }
+
+        SendButton.IsEnabled = false;
+        ChatInput.IsEnabled = false;
+        ChatStatusText.Text = "Thinking…";
+        ChatResponse.Text = "Getting a response…";
+        try
+        {
+            ChatResponse.Text = await _chatService.GetResponseAsync(question, _currentPrediction);
+            ChatInput.Clear();
+        }
+        catch (ConciergeChatException ex)
+        {
+            ChatResponse.Text = ex.Message;
+        }
+        catch (TaskCanceledException)
+        {
+            ChatResponse.Text = "The AI request timed out. Check your connection and try again.";
+        }
+        catch (HttpRequestException)
+        {
+            ChatResponse.Text = "Could not reach the AI provider. Check your connection and OUTAGE_AI_BASE_URL, then try again.";
+        }
+        catch (Exception)
+        {
+            ChatResponse.Text = "The AI response could not be read. Check the provider settings and try again.";
+        }
+        finally
+        {
+            ChatStatusText.Text = $"Ready · {_chatModel ?? "AI"}";
+            SendButton.IsEnabled = _chatService is not null;
+            ChatInput.IsEnabled = true;
+        }
+    }
+
+    private void ChatInput_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || !SendButton.IsEnabled) return;
+        e.Handled = true;
+        SendButton_Click(sender, new RoutedEventArgs());
     }
 
     private static double NormalizeLongitude(double longitude)
