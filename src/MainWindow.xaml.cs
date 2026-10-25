@@ -77,7 +77,9 @@ public partial class MainWindow : Window
     private void ToggleFullScreen()
     {
         WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
-        FullScreenButton.Content = WindowState == WindowState.Maximized ? "❐" : "□";
+        FullScreenIcon.Data = System.Windows.Media.Geometry.Parse(WindowState == WindowState.Maximized
+            ? "M 4.5 1.5 H 12.5 V 9.5 M 1.5 4.5 H 9.5 V 12.5 H 1.5 Z"
+            : "M 1.5 1.5 H 12.5 V 12.5 H 1.5 Z");
         FullScreenButton.ToolTip = WindowState == WindowState.Maximized ? "Exit full screen" : "Enter full screen";
     }
 
@@ -199,6 +201,12 @@ public partial class MainWindow : Window
         }
         CoordinateText.Text = $"Selected: {FormatCoordinate(_selectedCoordinate)}";
         MarkEstimatePending();
+    }
+
+    private void AreaMapControl_MouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        // Let Mapsui process the wheel event for map zoom, but keep the page ScrollViewer from consuming it.
+        e.Handled = true;
     }
 
     private void AreaMapControl_SizeChanged(object sender, SizeChangedEventArgs e)
