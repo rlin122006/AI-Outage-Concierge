@@ -1,15 +1,15 @@
-# AI Outage Concierge
+# L.A.R.P.
 
-A WPF prototype for the HACKOHI/O 2026 AI Outage Concierge challenge. It presents an anonymized location workflow, customer needs, an outage outlook, preparation guidance, alert preferences, and an assistant panel in one window.
+**L.A.R.P.** means **Likelihood Assessment and Reporting for Power outages**. This WPF prototype for the HACKOHI/O 2026 challenge presents an anonymized location workflow, a relative historical damage index, personalized preparation guidance, opt-in alert previews, and an assistant panel in one window.
 
 ## Project layout
 
-- `src/` — WPF application and feature code
-- `src/Prediction/` — prediction request/result contracts and placeholder service
+- `src/` — L.A.R.P. WPF application and feature code
+- `src/Prediction/` — prediction contracts, heuristic service, and aggregated GIS heatmap data
 - `src/Assistant/` — chat contract and local stub response
 - `src/Configuration/` — OpenAI-compatible provider settings contract
 
-The map is a blank coordinate grid. Click to set a prototype point. The estimate is illustrative and does not use a heatmap, live storm conditions, utility systems, or restoration data. Alert checkboxes record only a prototype preference; they do not send notifications. The assistant returns local default text and does not call a model.
+The map uses OpenStreetMap tiles with an optional, toggleable historical GIS coverage layer for southwest Virginia. Select a location and press **View my estimate** to refresh the relative risk index, repair-work scenario, and preparation guidance. The score is heuristic and is not a calibrated outage probability or live utility forecast. Alert previews follow documented prototype rules but do not send messages; official utility events are not connected. The assistant returns local default text and does not call a model.
 
 ## API configuration scaffold
 
@@ -23,4 +23,4 @@ Future integrations can read these environment variables without storing credent
 
 ## Run
 
-Open `AI Outage Concierge.slnx` in Visual Studio with the .NET 10 Windows Desktop workload, or run `dotnet run --project "AI Outage Concierge.csproj"` on Windows.
+Open `larp.slnx` in Visual Studio with the .NET 10 Windows Desktop workload, or run `dotnet run --project larp.csproj` on Windows.

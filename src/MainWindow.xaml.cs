@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
-using AI_Outage_Concierge.Assistant;
-using AI_Outage_Concierge.Prediction;
+using larp.Assistant;
+using larp.Prediction;
 using Mapsui;
 using Mapsui.Layers;
 using Mapsui.Limiting;
@@ -13,7 +15,7 @@ using Mapsui.Styles;
 using Mapsui.Tiling;
 using NetTopologySuite.Geometries;
 
-namespace AI_Outage_Concierge;
+namespace larp;
 
 public partial class MainWindow : Window
 {
@@ -34,7 +36,6 @@ public partial class MainWindow : Window
     private MemoryLayer? _selectionLayer;
     private double _fitResolution;
     private bool _mapReady;
-    private bool _hasRequestedEstimate;
 
     public MainWindow()
     {
@@ -44,7 +45,43 @@ public partial class MainWindow : Window
     private void Window_Loaded(object sender, RoutedEventArgs e)
     {
         InitializeAreaMap();
+        RefreshPreparationAndAlerts();
     }
+
+    private void WindowChrome_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left || IsWindowControl(e.OriginalSource as DependencyObject)) return;
+        if (e.ClickCount == 2)
+        {
+            ToggleFullScreen();
+            return;
+        }
+
+        DragMove();
+    }
+
+    private static bool IsWindowControl(DependencyObject? element)
+    {
+        while (element is not null)
+        {
+            if (element is Button) return true;
+            element = VisualTreeHelper.GetParent(element);
+        }
+        return false;
+    }
+
+    private void MinimizeWindow_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    private void ToggleFullScreen_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
+
+    private void ToggleFullScreen()
+    {
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+        FullScreenButton.Content = WindowState == WindowState.Maximized ? "❐" : "□";
+        FullScreenButton.ToolTip = WindowState == WindowState.Maximized ? "Exit full screen" : "Enter full screen";
+    }
+
+    private void CloseWindow_Click(object sender, RoutedEventArgs e) => Close();
 
     private void InitializeAreaMap()
     {
@@ -161,8 +198,7 @@ public partial class MainWindow : Window
             _map?.Refresh();
         }
         CoordinateText.Text = $"Selected: {FormatCoordinate(_selectedCoordinate)}";
-        NetworkText.Text = _predictionService.GetNetworkSummary(_selectedCoordinate);
-        if (_hasRequestedEstimate) UpdatePrediction();
+        MarkEstimatePending();
     }
 
     private void AreaMapControl_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -224,15 +260,46 @@ public partial class MainWindow : Window
             FactorsText.Text = "No location has been selected, so no estimate is available.";
             RestorationValue.Text = "Not available";
             RestorationDetailsText.Text = "Select a location to build a repair-effort scenario from nearby historical damage.";
+            NetworkText.Text = "Select a location, then view your estimate to refresh nearby network details.";
+            _currentPrediction = null;
+            PreparationLevelText.Text = "Select a location";
+            GuidanceText.Text = "Choose a point on the map, then view an estimate for guidance tailored to its historical index.";
+            RefreshPreparationAndAlerts();
             return;
         }
-        _hasRequestedEstimate = true;
         UpdatePrediction();
     }
 
     private void Scenario_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_mapReady && _hasRequestedEstimate && IsLoaded) UpdatePrediction();
+        if (_mapReady && IsLoaded) MarkEstimatePending();
+    }
+
+    private void Needs_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_mapReady && IsLoaded) MarkEstimatePending();
+    }
+
+    private void AlertPreference_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_mapReady && IsLoaded) MarkEstimatePending();
+    }
+
+    private void MarkEstimatePending()
+    {
+        _currentPrediction = null;
+        RiskValue.Text = "— / 100";
+        RiskBandValue.Text = "Estimate pending";
+        RiskConfidence.Text = "Inputs changed. Press View my estimate to refresh.";
+        RestorationValue.Text = "Estimate pending";
+        RestorationDetailsText.Text = "Press View my estimate to refresh the repair scenario.";
+        FactorsText.Text = "Press View my estimate to refresh the risk index and scenario factors.";
+        NetworkText.Text = "Press View my estimate to refresh nearby network details.";
+        PreparationLevelText.Text = "Estimate pending";
+        GuidanceText.Text = "Press View my estimate to refresh guidance for the selected location, scenario, and declared needs.";
+        EligibilityText.Text = "Press View my estimate to refresh alert eligibility for the current preferences.";
+        AlertPlanPanel.Visibility = Visibility.Collapsed;
+        ChatResponse.Text = "Your estimate inputs changed. Press View my estimate to refresh the information before asking about it.";
     }
 
     private void UpdatePrediction()
@@ -263,13 +330,130 @@ public partial class MainWindow : Window
                 : $"About {_currentPrediction.TotalPersonHours:0} total person-hours after the labor multiplier. Based on the historical local damage mix, selected crew, 8-hour days, and an illustrative −25%/+35% duration buffer. Not a live outage estimate.";
         }
         NetworkText.Text = _currentPrediction.NetworkSummary;
-        GuidanceText.Text = _currentPrediction.PreparationGuidance;
-        EligibilityText.Text = SmsCheck.IsChecked == true || EmailCheck.IsChecked == true
-            ? "Preference selected for prototype alerts. No alert channel is connected."
-            : "No alert channel selected. Enable SMS or email above to indicate a preference.";
+        RefreshPreparationAndAlerts();
         ChatResponse.Text = _currentPrediction.HasData
             ? "I can explain the historical damage index and your scenario assumptions. This assistant is a prototype without live outage information."
             : "This location is outside the historical dataset coverage, so I can’t provide a data-backed local estimate. Check official utility updates.";
+    }
+
+    private void RefreshPreparationAndAlerts()
+    {
+        var prediction = _currentPrediction;
+        var medicalNeed = MedicalCheck.IsChecked == true;
+        var accessNeed = AccessCheck.IsChecked == true;
+        var criticalNeed = CriticalCheck.IsChecked == true;
+        var declaredNeeds = new List<string>();
+        if (medicalNeed) declaredNeeds.Add("Because you selected a powered medical-equipment need, confirm backup runtime and a plan with your care provider or equipment supplier so you know what to do before device power runs low.");
+        if (accessNeed) declaredNeeds.Add("Because you selected an assistance need, arrange an accessible check-in and backup transport or support contact to reduce barriers if normal services are disrupted.");
+        if (criticalNeed) declaredNeeds.Add("Because you identified a critical facility, review continuity, backup power, staffing, and service-transfer triggers so essential services can continue if power is interrupted.");
+
+        if (prediction is null)
+        {
+            PreparationLevelText.Text = "Risk-based guidance · awaiting estimate";
+            GuidanceText.Text = "Select a location and view an estimate for advice based on its historical damage index. Until then, keep phones charged and basic supplies together so you can communicate and respond if service is interrupted; follow official weather and utility updates.";
+        }
+        else if (!prediction.HasData)
+        {
+            PreparationLevelText.Text = "Local index unavailable";
+            GuidanceText.Text = "This location has no supporting historical data, so the app cannot compare local damage patterns or size a repair scenario. That is not evidence of low risk; use official weather and utility advisories to plan.";
+        }
+        else
+        {
+            var score = prediction.RelativeRiskIndex;
+            var severity = score switch { < 25 => "Lower", < 50 => "Moderate", < 75 => "Elevated", _ => "High" };
+            PreparationLevelText.Text = $"{severity} historical index · {score:0}/100";
+            var riskAdvice = score switch
+            {
+                < 25 => "The historical index is lower here, but it cannot rule out an outage. Keep phones charged and basic supplies together so you can communicate and respond if service is interrupted.",
+                < 50 => "This moderate index reflects a stronger historical damage signal than lower-index areas, not a guaranteed outage. Charge phones and backup batteries so you can stay in contact; stage lighting and water so you are not searching for essentials if power stops.",
+                < 75 => "This elevated index reflects more historical damage signal in the nearby data, not certainty of an outage. Charge backup power to preserve communication, stage several days of essentials to reduce last-minute trips, and confirm a check-in contact in case normal services are disrupted.",
+                _ => "This high index reflects the strongest historical damage signal band, not a prediction that an outage will occur. Confirm backup power and a support contact now, and stage essentials so you can act if travel, charging, or supply access becomes difficult."
+            };
+            var repairGuidance = prediction.TotalPersonHours is double personHours && SelectedCrewSize() > 0
+                ? BuildRepairDurationGuidance(personHours, SelectedCrewSize(), prediction.RestorationRange)
+                : "Nearby repair duration is not available; this index is not a customer outage-duration estimate.";
+            GuidanceText.Text = $"{riskAdvice} {repairGuidance} Declared needs affect preparation advice only; they do not change the risk index.";
+        }
+
+        if (declaredNeeds.Count > 0)
+            GuidanceText.Text += " " + string.Join(" ", declaredNeeds);
+
+        var channels = GetSelectedAlertChannels();
+        if (channels.Count == 0)
+        {
+            EligibilityText.Text = "Alerts are off. Opt in to SMS or email to see a prototype alert plan.";
+            AlertPlanPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        AlertPlanPanel.Visibility = Visibility.Visible;
+        var channelText = string.Join(" and ", channels);
+        if (prediction is null)
+        {
+            EligibilityText.Text = $"Opted in to {channelText}. Calculate an estimate to check pre-storm eligibility.";
+        }
+        else if (!prediction.HasData)
+        {
+            EligibilityText.Text = $"Opted in to {channelText}, but this location has no supporting data for a risk-based pre-storm alert.";
+        }
+        else if (prediction.RelativeRiskIndex >= 50)
+        {
+            EligibilityText.Text = $"Eligible for a prototype pre-storm advisory on {channelText}: the historical index is at least 50/100 and you opted in.";
+        }
+        else
+        {
+            EligibilityText.Text = $"Opted in to {channelText}. The historical index is below the prototype pre-storm threshold of 50/100, so no risk-based pre-storm advisory qualifies.";
+        }
+
+        var optedNeeds = new List<string>();
+        if (medicalNeed) optedNeeds.Add("powered medical equipment");
+        if (accessNeed) optedNeeds.Add("assistance");
+        if (criticalNeed) optedNeeds.Add("critical facility");
+        var escalation = optedNeeds.Count == 0
+            ? "Escalation: recommend a human check-in after a utility-confirmed outage; direct immediate danger to emergency services."
+            : $"Escalation: a human check-in is recommended after a confirmed outage because you declared {string.Join(", ", optedNeeds)}. No need is inferred. Immediate danger requires emergency services.";
+        AlertPlanText.Text = $"Prototype rules: explicit opt-in is required; only selected channels ({channelText}) are used. A supported index of 50/100 or higher qualifies for a pre-storm advisory. Suggested timing: about 24 hours before a forecast storm, giving time to prepare; send follow-ups only after a 10+ point index change or a band crossing to avoid messages for small shifts. SMS suits short urgent notices because they are quick to read; email suits fuller checklists that customers may want to revisit. Outage confirmation, utility estimate changes, and restoration-complete alerts require official utility events, which are not connected. {escalation} No messages are sent by this prototype.";
+
+        PreStormMessageText.Text = prediction is { HasData: true }
+            ? BuildPreStormMessage(prediction)
+            : "Storm planning update: a local historical risk estimate is unavailable for your selected area. Prepare using official weather and utility advisories; no local index is available.";
+        OutageConfirmedMessageText.Text = "The utility has confirmed an outage in your area. Restoration timing is not available in this prototype. Check official utility updates. If you see a downed line, stay away and call emergency services and your utility.";
+        EstimateUpdatedMessageText.Text = "Update: the utility revised its restoration estimate to [new utility-reported time]. Check the latest utility update; this message is sent only after an official estimate change.";
+        RestorationCompleteMessageText.Text = "The utility reports that service has been restored in your area. If your home is still without power, report it to the utility. This message requires an official restoration event.";
+    }
+
+    private static string BuildRepairDurationGuidance(double totalPersonHours, int crewSize, string restorationRange)
+    {
+        if (restorationRange.StartsWith("Not enough", StringComparison.OrdinalIgnoreCase))
+            return "Nearby historical repair records are too sparse to estimate crew workdays, so the app cannot tailor preparation to a repair duration.";
+        var crewDays = totalPersonHours / (crewSize * 8.0);
+        var upperDays = Math.Max(0.2, crewDays * 1.35);
+        var durationAdvice = upperDays >= 3
+            ? "The upper repair scenario spans several crew workdays. Because an extended disruption can make supplies and charging harder to access, stage items you may need to replenish."
+            : upperDays > 1
+                ? "The upper repair scenario extends beyond one crew workday. Keep supplies and check-ins planned in case the disruption continues across shifts."
+                : "This scenario is under about one crew workday, but that measures repair workload, not when your power returns. Keep essentials ready until the utility confirms service is restored.";
+        return $"Repair-work scenario: {restorationRange}. {durationAdvice} This is an estimate of crew effort from historical reports, not a customer outage-duration estimate.";
+    }
+
+    private static string BuildPreStormMessage(OutagePrediction prediction)
+    {
+        var preparationReason = prediction.RelativeRiskIndex switch
+        {
+            < 25 => "A lower index cannot rule out an outage, so keep a charged phone ready for official updates.",
+            < 50 => "This moderate historical signal is a reason to charge devices and stage lighting and water, so essentials are ready if service is interrupted.",
+            < 75 => "This elevated historical signal supports charging backup power and staging supplies, so you can stay in contact and avoid last-minute trips if service is interrupted.",
+            _ => "This high historical signal supports confirming backup power and a support contact now, so you have a plan if service or travel is disrupted."
+        };
+        return $"Storm planning update: historical damage index {prediction.RelativeRiskIndex:0}/100 ({prediction.RiskBand}). {preparationReason} Scenario repair effort: {prediction.RestorationRange}; crew-work estimate only, not an outage ETA. Follow official updates.";
+    }
+
+    private List<string> GetSelectedAlertChannels()
+    {
+        var channels = new List<string>();
+        if (SmsCheck.IsChecked == true) channels.Add("SMS");
+        if (EmailCheck.IsChecked == true) channels.Add("email");
+        return channels;
     }
 
     private StormScenario SelectedStorm()
@@ -300,8 +484,6 @@ public partial class MainWindow : Window
         var label = item.Content?.ToString()?.Split('·')[0].Trim() ?? "Standard access";
         return new RepairAccessCondition(label, extraHours);
     }
-
-    private void EditButton_Click(object sender, RoutedEventArgs e) { ContentScroller.ScrollToTop(); StormCombo.Focus(); }
 
     private void SendButton_Click(object sender, RoutedEventArgs e)
     {

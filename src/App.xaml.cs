@@ -1,8 +1,8 @@
-﻿using System.Configuration;
+using System.Configuration;
 using System.Data;
 using System.Windows;
 
-namespace AI_Outage_Concierge
+namespace larp
 {
     /// <summary>
     /// Interaction logic for App.xaml

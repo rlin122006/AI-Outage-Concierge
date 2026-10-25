@@ -1,7 +1,7 @@
-﻿<Application x:Class="AI_Outage_Concierge.App"
+<Application x:Class="larp.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:AI_Outage_Concierge"
+             xmlns:local="clr-namespace:larp"
              StartupUri="src/MainWindow.xaml">
     <Application.Resources>
          

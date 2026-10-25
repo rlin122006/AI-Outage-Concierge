@@ -1,4 +1,4 @@
-namespace AI_Outage_Concierge.Configuration;
+namespace larp.Configuration;
 
 /// <summary>Settings contract for a future OpenAI-compatible chat completion provider.</summary>
 public sealed record OpenAiCompatibleApiOptions(Uri BaseAddress, string Model, string ApiKey)

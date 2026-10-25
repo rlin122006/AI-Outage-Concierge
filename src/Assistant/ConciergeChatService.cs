@@ -1,6 +1,6 @@
-using AI_Outage_Concierge.Prediction;
+using larp.Prediction;
 
-namespace AI_Outage_Concierge.Assistant;
+namespace larp.Assistant;
 
 public interface IConciergeChatService
 {

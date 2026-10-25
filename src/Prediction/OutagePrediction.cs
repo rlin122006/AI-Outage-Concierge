@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.IO;
 
-namespace AI_Outage_Concierge.Prediction;
+namespace larp.Prediction;
 
 public sealed record MapCoordinate(double Longitude, double Latitude);
 public sealed record StormScenario(string Name, double Multiplier);
