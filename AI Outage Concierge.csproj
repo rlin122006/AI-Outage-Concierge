@@ -11,8 +11,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Mapsui.Wpf" Version="5.1.0" />
     <ApplicationDefinition Include="src\App.xaml" />
     <None Update=".env.example" CopyToOutputDirectory="Never" />
+    <None Update="src\Prediction\network_heatmap.csv" CopyToOutputDirectory="PreserveNewest" Link="Prediction\network_heatmap.csv" />
   </ItemGroup>
-
 </Project>
